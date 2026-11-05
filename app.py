@@ -1,5 +1,8 @@
 import streamlit as st
 import pandas as pd
+import sympy
+from sympy.logic.boolalg import truth_table
+from sympy.parsing.sympy_parser import parse_expr
 
 # --- UI Setup with Name & Scholar Number ---
 st.set_page_config(page_title="Boolean Simplifier", layout="wide")
@@ -34,11 +37,28 @@ def compare_terms(a, b):
         return a[:idx] + '-' + a[idx+1:]
     return None
 
-def simplify_expression(minterms):
+def bin_to_var(binary_str):
+    # Converts binary like '01-1' into 'A\'BC\'D'
+    vars_list = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    res = []
+    for i, bit in enumerate(binary_str):
+        if bit == '0':
+            res.append(f"{vars_list[i]}'")
+        elif bit == '1':
+            res.append(vars_list[i])
+    if not res:
+        return "1" # All dashes means it's always True
+    return "".join(res)
+
+def simplify_expression(minterms, bits):
     if not minterms:
+        st.success("**Final Reduced Expression:** 0 (Always False)")
+        return
+        
+    if len(minterms) == 2**bits:
+        st.success("**Final Reduced Expression:** 1 (Always True)")
         return
     
-    bits = len(bin(max(minterms))) - 2
     groups = {}
     
     # Step 1: Initial Grouping
@@ -66,7 +86,6 @@ def simplify_expression(minterms):
         new_groups = {}
         matched_any_in_step = False
         keys = sorted(current_groups.keys())
-        
         step_data = []
         
         for i in range(len(keys) - 1):
@@ -85,12 +104,10 @@ def simplify_expression(minterms):
                             new_groups[ones] = []
                         
                         combined_m = sorted(list(set(t1['m'] + t2['m'])))
-                        # Avoid duplicates
                         if not any(x['bin'] == res for x in new_groups[ones]):
                             new_groups[ones].append({'m': combined_m, 'bin': res, 'matched': False})
                             step_data.append({"Matched Minterms": str(combined_m), "New Binary": res})
         
-        # Collect unmatched terms as Prime Implicants
         for k in keys:
             for t in current_groups[k]:
                 if not t['matched'] and t['bin'] not in [x['bin'] for x in all_pi]:
@@ -105,33 +122,107 @@ def simplify_expression(minterms):
         else:
             break
 
-    # Step 3: Prime Implicant Chart
+    # Step 3: Prime Implicant Chart & EPIs
     st.header("Step 3: Prime Implicant Chart")
-    pi_chart = {}
+    pi_chart = {m: [] for m in minterms}
+    pi_df_data = {}
+    
     for m in minterms:
-        pi_chart[str(m)] = []
+        pi_df_data[str(m)] = []
         for pi in all_pi:
             if m in pi['m']:
-                pi_chart[str(m)].append("X")
+                pi_df_data[str(m)].append("X")
+                pi_chart[m].append(pi['bin'])
             else:
-                pi_chart[str(m)].append("")
+                pi_df_data[str(m)].append("")
                 
-    pi_df = pd.DataFrame(pi_chart)
+    pi_df = pd.DataFrame(pi_df_data)
     pi_df.insert(0, "Prime Implicant (Binary)", [pi['bin'] for pi in all_pi])
     st.table(pi_df)
 
-    # Note: Extracting minimal equation from PIs mathematically requires Petrick's method.
-    # For display purposes, we output the raw Prime Implicants list.
-    st.success(f"**Identified Prime Implicants:** {', '.join([pi['bin'] for pi in all_pi])}")
-    st.info("Variables represented by bits (e.g., '0' = A', '1' = A, '-' = eliminated).")
+    # Find Essential Prime Implicants (EPIs)
+    epis = []
+    covered_minterms = set()
+    for m, pis in pi_chart.items():
+        if len(pis) == 1:
+            if pis[0] not in epis:
+                epis.append(pis[0])
+            for pi in all_pi:
+                if pi['bin'] == pis[0]:
+                    for cov_m in pi['m']:
+                        covered_minterms.add(cov_m)
 
-# --- Dashboard Input ---
+    # Step 4: Final Output (Greedy selection for remaining PIs)
+    final_pis = list(epis)
+    remaining_minterms = set(minterms) - covered_minterms
+    remaining_all_pis = [pi for pi in all_pi if pi['bin'] not in epis]
+    
+    while remaining_minterms:
+        best_pi = None
+        best_cover = set()
+        for pi in remaining_all_pis:
+            cover = set(pi['m']) & remaining_minterms
+            if len(cover) > len(best_cover):
+                best_cover = cover
+                best_pi = pi
+        if best_pi:
+            final_pis.append(best_pi['bin'])
+            remaining_minterms -= best_cover
+            remaining_all_pis.remove(best_pi)
+
+    st.markdown("---")
+    st.subheader("Results")
+    st.info(f"**All Prime Implicants:** {', '.join([bin_to_var(pi['bin']) for pi in all_pi])}")
+    st.info(f"**Essential Prime Implicants (EPIs):** {', '.join([bin_to_var(e) for e in epis]) if epis else 'None'}")
+    
+    final_expression = " + ".join([bin_to_var(pi) for pi in final_pis])
+    st.success(f"**Final Minimal Boolean Expression:**  {final_expression}")
+
+# --- Dashboard Input Area ---
 st.markdown("---")
-minterm_input = st.text_input("Enter Minterms separated by commas (e.g., 0, 1, 3, 7, 8, 10):", "0, 1, 3, 7, 8, 10")
-if st.button("Calculate Minimal Expression", type="primary"):
-    try:
-        minterms_list = [int(x.strip()) for x in minterm_input.split(',') if x.strip()]
-        minterms_list = sorted(list(set(minterms_list)))
-        simplify_expression(minterms_list)
-    except ValueError:
-        st.error("Invalid input. Please enter numbers only.")
+st.subheader("Input Configuration")
+
+input_type = st.radio("Choose Input Method:", ["Minterms", "Maxterms", "Boolean Expression"])
+
+if input_type in ["Minterms", "Maxterms"]:
+    num_vars = st.number_input("Number of Variables (bits):", min_value=1, max_value=10, value=3)
+    user_input = st.text_input(f"Enter {input_type} (comma-separated):", "0, 1, 3")
+    
+    if st.button("Calculate Minimal Expression", type="primary"):
+        try:
+            terms = [int(x.strip()) for x in user_input.split(',') if x.strip()]
+            if any(t >= 2**num_vars for t in terms):
+                st.error(f"Error: A term exceeds the maximum possible value ({2**num_vars - 1}) for {num_vars} variables.")
+            else:
+                if input_type == "Minterms":
+                    minterms_list = sorted(list(set(terms)))
+                else: # Maxterms
+                    universal_set = set(range(2**num_vars))
+                    minterms_list = sorted(list(universal_set - set(terms)))
+                
+                simplify_expression(minterms_list, num_vars)
+        except ValueError:
+            st.error("Invalid input. Please enter numbers only.")
+
+elif input_type == "Boolean Expression":
+    st.markdown("**Instructions:** Use `&` for AND, `|` for OR, and `~` for NOT. (Example: `(~A & B) | C`)")
+    expr_input = st.text_input("Enter Boolean Expression:", "(~A & B) | C")
+    
+    if st.button("Calculate Minimal Expression", type="primary"):
+        try:
+            # Parse expression
+            expr = parse_expr(expr_input)
+            variables = sorted(list(expr.free_symbols), key=lambda x: x.name)
+            num_vars = len(variables)
+            
+            # Generate Truth Table to extract minterms
+            tt = truth_table(expr, variables)
+            minterms_list = []
+            for i, result in enumerate(tt):
+                if result[1]: # If the expression evaluates to True
+                    minterms_list.append(i)
+                    
+            st.write(f"*Parsed Variables:* {', '.join([v.name for v in variables])} | *Generated Minterms:* {minterms_list}")
+            simplify_expression(minterms_list, num_vars)
+        except Exception as e:
+            st.error(f"Error parsing expression. Please check your syntax. (Details: {e})")
