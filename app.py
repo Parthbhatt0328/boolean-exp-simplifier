@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import sympy
-from sympy.logic.boolalg import truth_table
+from sympy.logic.boolalg import truth_table, to_nnf, to_dnf
 from sympy.parsing.sympy_parser import parse_expr
 import re
 
@@ -11,7 +11,7 @@ st.set_page_config(page_title="Boolean Simplifier", layout="wide")
 col1, col2 = st.columns([3, 1])
 with col1:
     st.title("Boolean Expression Simplifier")
-    st.markdown("**(Algebraic Redundancy & Tabular Method)**")
+    st.markdown("**(Algebraic Breakdown & Quine-McCluskey)**")
 with col2:
     st.markdown(
         """
@@ -78,7 +78,17 @@ def parse_custom_boolean(expr_str):
             expr_str = expr_str[:idx] + expr_str[idx+1:]
     return expr_str
 
-def simplify_expression(minterms, bits, var_names, original_expr=None):
+def sympy_to_custom(sympy_expr):
+    """Converts SymPy's ugly '~A & B' back to our clean 'A'.B' format."""
+    s = str(sympy_expr)
+    s = s.replace('&', '.')
+    s = s.replace('|', '+')
+    # Use regex to convert ~A to A'
+    s = re.sub(r'~([A-Za-z0-9_]+)', r"\1'", s)
+    s = re.sub(r'~\((.*?)\)', r"(\1)'", s)
+    return s
+
+def simplify_expression(minterms, bits, var_names, skip_step1_header=False):
     if not minterms:
         st.success("**Final Reduced Expression:** 0 (Always False)")
         return
@@ -87,13 +97,9 @@ def simplify_expression(minterms, bits, var_names, original_expr=None):
         st.success("**Final Reduced Expression:** 1 (Always True)")
         return
         
-    if original_expr:
-        st.markdown("### Step 1: Algebraic Expansion")
-        st.info("Expanding the inputted boolean expression into its Canonical Sum of Products (SOP) state to begin reduction.")
-        canonical_terms = [bin_to_var(get_binary(m, bits), var_names) for m in minterms]
-        st.write(f"**Canonical SOP:** `{ ' + '.join(canonical_terms) }`")
-    else:
-        st.header("Step 1: Binary Grouping")
+    if not skip_step1_header:
+        st.header("Step 1: Grouping by 1s")
+        st.info("First, we convert everything to binary and group them by the number of 1s. This sets us up for the redundancy checks.")
 
     groups = {}
     for m in minterms:
@@ -109,9 +115,9 @@ def simplify_expression(minterms, bits, var_names, original_expr=None):
             step1_data.append({"Group (1s)": k, "Minterm": str(item['m'][0]), "Binary": item['bin'], "Algebraic Term": bin_to_var(item['bin'], var_names)})
     st.table(pd.DataFrame(step1_data))
 
-    # Step 2: Step-by-Step Pairing (Redundancy Theorems)
-    st.header("Step 2: Applying Redundancy Theorems")
-    st.info("Systematically applying the Redundancy Theorem ( **XY + XY' = X** ) to reach the Prime Implicants state.")
+    # Step 2: Tabular Pairing
+    st.header("Step 2: Hunting for Redundancy")
+    st.info("Here's where the magic happens. We compare adjacent groups to find terms that only differ by one variable, knocking that variable out using the Redundancy Theorem ( **XY + XY' = X** ).")
     
     all_pi = []
     current_groups = groups
@@ -142,14 +148,13 @@ def simplify_expression(minterms, bits, var_names, original_expr=None):
                         if not any(x['bin'] == res for x in new_groups[ones]):
                             new_groups[ones].append({'m': combined_m, 'bin': res, 'matched': False})
                             
-                            # Generate the Algebraic Redundancy String
                             term1_str = bin_to_var(t1['bin'], var_names)
                             term2_str = bin_to_var(t2['bin'], var_names)
                             res_str = bin_to_var(res, var_names)
-                            theorem_str = f"{term1_str} + {term2_str} ➔ {res_str}"
+                            theorem_str = f"{term1_str} + {term2_str}  ➔  {res_str}"
                             
                             step_data.append({
-                                "Minterm Match": str(combined_m), 
+                                "Matched Minterms": str(combined_m), 
                                 "Binary Result": res, 
                                 "Redundancy Theorem Applied": theorem_str
                             })
@@ -160,17 +165,18 @@ def simplify_expression(minterms, bits, var_names, original_expr=None):
                     all_pi.append(t)
                     
         if matched_any_in_step:
-            st.subheader(f"Reduction Iteration {step}")
+            st.subheader(f"Pass #{step}")
             if step_data:
                 st.table(pd.DataFrame(step_data))
             current_groups = new_groups
             step += 1
         else:
+            st.success("No more redundancies found! We've successfully isolated the Prime Implicants.")
             break
 
-    # Step 3: Prime Implicant Chart (Eliminating NEPIs)
-    st.header("Step 3: Eliminating Non-Essential Prime Implicants")
-    st.info("Using the Prime Implicant Chart to select Essential Prime Implicants (EPIs) and eliminate redundant Non-Essential Prime Implicants (NEPIs).")
+    # Step 3: Prime Implicant Chart
+    st.header("Step 3: The Prime Implicant Chart")
+    st.info("Time to filter out the noise. We plot our Prime Implicants on a chart to see which ones are absolutely essential (EPIs) to cover our minterms, and we drop the redundant ones.")
     
     pi_chart = {m: [] for m in minterms}
     pi_df_data = {}
@@ -203,7 +209,7 @@ def simplify_expression(minterms, bits, var_names, original_expr=None):
     # Find Non-Essential Prime Implicants (NEPIs)
     nepis = [pi['bin'] for pi in all_pi if pi['bin'] not in epis]
 
-    # Step 4: Final Output
+    # Final Output Greedy Selection
     final_pis = list(epis)
     remaining_minterms = set(minterms) - covered_minterms
     remaining_all_pis = [pi for pi in all_pi if pi['bin'] not in epis]
@@ -222,97 +228,10 @@ def simplify_expression(minterms, bits, var_names, original_expr=None):
             remaining_all_pis.remove(best_pi)
 
     st.markdown("---")
-    st.header("Step 4: Final Result Categorization")
-    st.info(f"**Prime Implicants State (All):** {', '.join([bin_to_var(pi['bin'], var_names) for pi in all_pi])}")
-    st.success(f"**Essential Prime Implicants (Kept):** {', '.join([bin_to_var(e, var_names) for e in epis]) if epis else 'None'}")
-    st.warning(f"**Non-Essential Prime Implicants (Eliminated):** {', '.join([bin_to_var(n, var_names) for n in nepis]) if nepis else 'None'}")
+    st.header("The Final Breakdown")
+    st.write(f"**Prime Implicants State (All):** {', '.join([bin_to_var(pi['bin'], var_names) for pi in all_pi])}")
+    st.write(f"**Essential Prime Implicants (Kept):** {', '.join([bin_to_var(e, var_names) for e in epis]) if epis else 'None'}")
+    st.write(f"**Non-Essential Prime Implicants (Dropped):** {', '.join([bin_to_var(n, var_names) for n in nepis]) if nepis else 'None'}")
     
-    final_expression = " + ".join([bin_to_var(pi, var_names) for pi in final_pis])
-    st.markdown("### 🏆 Minimal Boolean Expression:")
-    st.error(f"**{final_expression}**")
-
-
-# --- Dashboard Input Area ---
-st.markdown("---")
-st.subheader("Input Configuration")
-
-input_type = st.radio("Choose Input Method:", ["Minterms", "Maxterms", "Boolean Expression"])
-default_vars = list("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
-
-if input_type in ["Minterms", "Maxterms"]:
-    num_vars = st.number_input("Number of Variables (bits):", min_value=1, max_value=10, value=3)
-    var_names = default_vars[:num_vars]
+    final_expression
     
-    max_val = (2**num_vars) - 1
-    
-    st.markdown(f"**Instructions:** Enter a list of comma-separated numbers from **0 to {max_val}** (since you selected {num_vars} variables).")
-    if input_type == "Minterms":
-        st.markdown("**Example input:** `0, 1, 2, 5, 7`")
-    else:
-        st.markdown("**Example input:** `3, 4, 6`")
-    
-    user_input = st.text_input(
-        f"Enter {input_type}:", 
-        value="0, 1, 3, 7" if input_type == "Minterms" else "2, 4, 5", 
-        help=f"Type comma-separated numbers between 0 and {max_val}.",
-        placeholder=f"Example: 0, 2, {max_val}"
-    )
-    
-    if st.button("Calculate Minimal Expression", type="primary"):
-        if not user_input.strip():
-            st.error(f"⚠️ Input is empty. Please enter some numbers (Example: 0, 1, {max_val}).")
-        
-        elif not re.match(r'^[\d,\s]+$', user_input):
-            st.error("⚠️ Invalid format! Please enter ONLY numbers and commas. Letters or special characters are not allowed.")
-        
-        else:
-            try:
-                terms = [int(x.strip()) for x in user_input.split(',') if x.strip()]
-                
-                if any(t >= 2**num_vars for t in terms):
-                    st.error(f"⚠️ Out of bounds! You selected {num_vars} variables, which means the maximum allowed number is {max_val}.")
-                else:
-                    if input_type == "Minterms":
-                        minterms_list = sorted(list(set(terms)))
-                    else: 
-                        universal_set = set(range(2**num_vars))
-                        minterms_list = sorted(list(universal_set - set(terms)))
-                    
-                    simplify_expression(minterms_list, num_vars, var_names)
-            except ValueError:
-                st.error("⚠️ Error processing numbers. Check for double commas or typos.")
-
-elif input_type == "Boolean Expression":
-    st.markdown("**Instructions:** Use `.` for AND, `+` for OR, and `'` for NOT.")
-    st.markdown("**Example input:** `A'.B + C`")
-    expr_input = st.text_input(
-        "Enter Boolean Expression:", 
-        value="A'.B + C",
-        help="Use strictly these operators: ' (NOT), . (AND), + (OR)",
-        placeholder="Example: (A'.B) + C'"
-    )
-    
-    if st.button("Calculate Minimal Expression", type="primary"):
-        if not expr_input.strip():
-            st.error("⚠️ Expression is empty. Please enter a valid Boolean expression.")
-        else:
-            try:
-                sympy_syntax = parse_custom_boolean(expr_input)
-                expr = parse_expr(sympy_syntax)
-                
-                variables = sorted(list(expr.free_symbols), key=lambda x: str(x))
-                var_names = [str(v) for v in variables]
-                num_vars = len(var_names)
-                
-                if num_vars > 10:
-                    st.error("⚠️ Too many variables! Please limit your expression to 10 unique variables.")
-                else:
-                    tt = truth_table(expr, variables)
-                    minterms_list = []
-                    for i, result in enumerate(tt):
-                        if result[1]:
-                            minterms_list.append(i)
-                            
-                    simplify_expression(minterms_list, num_vars, var_names, original_expr=expr_input)
-            except Exception:
-                st.error("⚠️ Invalid expression syntax! Make sure you only use your variables (A, B, C) and the allowed operators ( ' , . , + ). Example: A'.B + C")
