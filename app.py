@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import sympy
-from sympy.logic.boolalg import truth_table, to_nnf, to_dnf
+from sympy.logic.boolalg import truth_table, to_nnf, to_dnf, simplify_logic
 from sympy.parsing.sympy_parser import parse_expr
 import re
 
@@ -307,27 +307,33 @@ elif input_type == "Boolean Expression":
                     st.error("Whoa, that's a lot of variables! Let's keep it to 10 or fewer.")
                 else:
                     st.markdown("---")
-                    st.header("Phase 1: Algebraic Cleanup")
-                    st.info("Before we hit the tables, let's break this down using standard Boolean theorems.")
+                    st.header("Phase 1: Pure Algebraic Simplification")
+                    st.info("Before we look at tables, let's break this down using standard Boolean theorems.")
                     
-                    # 2. Show Original
+                    # Show Original
                     st.markdown("**1. Original Expression:**")
                     st.code(sympy_to_custom(expr))
                     
-                    # 3. Apply De Morgan's / Involution
+                    # Apply De Morgan's / Involution
                     nnf_expr = to_nnf(expr)
                     st.markdown("**2. De Morgan's & Involution Laws (Pushing NOTs inward):**")
                     st.code(sympy_to_custom(nnf_expr))
                     
-                    # 4. Apply Distributive Law
+                    # Apply Distributive Law
                     dnf_expr = to_dnf(nnf_expr)
                     st.markdown("**3. Distributive Law (Expanding into Sum of Products):**")
                     st.code(sympy_to_custom(dnf_expr))
                     
-                    st.write("Now that we have a clean Sum of Products, we can map it to minterms and fire up the Tabular Method to track the remaining redundancies.")
-                    st.markdown("---")
+                    # Apply Pure Boolean Simplification (Absorption, Redundancy, Idempotent)
+                    alg_simp_expr = simplify_logic(expr, form='dnf')
+                    st.markdown("**4. Pure Algebraic Simplification (Applying Absorption, Idempotent & Redundancy Laws):**")
+                    st.success(f"**Algebraically Simplified Formula:** {sympy_to_custom(alg_simp_expr)}")
                     
-                    # 5. Get minterms and run QM
+                    st.write("There we have it—the simplified formula using pure Boolean algebra rules! Now, let's pass this over to the **Quine-McCluskey (Tabular) Method** to formally identify the Essential Prime Implicants and mathematically prove this minimal answer.")
+                    st.markdown("---")
+                    st.header("Phase 2: Tabular Method (Quine-McCluskey)")
+                    
+                    # Get minterms and run QM
                     tt = truth_table(expr, variables)
                     minterms_list = [i for i, result in enumerate(tt) if result[1]]
                     
