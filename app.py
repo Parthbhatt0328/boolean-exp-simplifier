@@ -224,19 +224,25 @@ if input_type in ["Minterms", "Maxterms"]:
     var_names = default_vars[:num_vars]
     
     max_val = (2**num_vars) - 1
+    
+    # --- ADDED INSTRUCTIONS AND EXAMPLES HERE ---
+    st.markdown(f"**Instructions:** Enter a list of comma-separated numbers from **0 to {max_val}** (since you selected {num_vars} variables).")
+    if input_type == "Minterms":
+        st.markdown("**Example input:** `0, 1, 2, 5, 7`")
+    else:
+        st.markdown("**Example input:** `3, 4, 6`")
+    
     user_input = st.text_input(
         f"Enter {input_type}:", 
-        value="0, 1, 3, 7", 
-        help=f"Type comma-separated numbers between 0 and {max_val}. Example: 0, 1, 3",
-        placeholder="Example: 0, 1, 3, 7"
+        value="0, 1, 3, 7" if input_type == "Minterms" else "2, 4, 5", 
+        help=f"Type comma-separated numbers between 0 and {max_val}.",
+        placeholder=f"Example: 0, 2, {max_val}"
     )
     
     if st.button("Calculate Minimal Expression", type="primary"):
-        # 1. Check for empty input
         if not user_input.strip():
             st.error(f"⚠️ Input is empty. Please enter some numbers (Example: 0, 1, {max_val}).")
         
-        # 2. Check for invalid characters (letters, symbols)
         elif not re.match(r'^[\d,\s]+$', user_input):
             st.error("⚠️ Invalid format! Please enter ONLY numbers and commas. Letters or special characters are not allowed.")
         
@@ -244,7 +250,6 @@ if input_type in ["Minterms", "Maxterms"]:
             try:
                 terms = [int(x.strip()) for x in user_input.split(',') if x.strip()]
                 
-                # 3. Check for out-of-bounds numbers based on variable count
                 if any(t >= 2**num_vars for t in terms):
                     st.error(f"⚠️ Out of bounds! You selected {num_vars} variables, which means the maximum allowed number is {max_val}.")
                 else:
@@ -260,6 +265,7 @@ if input_type in ["Minterms", "Maxterms"]:
 
 elif input_type == "Boolean Expression":
     st.markdown("**Instructions:** Use `.` for AND, `+` for OR, and `'` for NOT.")
+    st.markdown("**Example input:** `A'.B + C`")
     expr_input = st.text_input(
         "Enter Boolean Expression:", 
         value="A'.B + C",
@@ -288,7 +294,4 @@ elif input_type == "Boolean Expression":
                         if result[1]:
                             minterms_list.append(i)
                             
-                    st.write(f"*Identified Variables:* {', '.join(var_names)} | *Generated Minterms:* {minterms_list}")
-                    simplify_expression(minterms_list, num_vars, var_names)
-            except Exception:
-                st.error("⚠️ Invalid expression syntax! Make sure you only use your variables (A, B, C) and the allowed operators ( ' , . , + ). Example: A'.B + C")
+                    st.write(f"*Identified Variables:* {', '.join(var_names)} | *Generated Minterms
