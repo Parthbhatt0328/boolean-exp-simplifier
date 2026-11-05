@@ -47,19 +47,17 @@ def bin_to_var(binary_str, var_names):
         elif bit == '1':
             res.append(var_names[i])
     if not res:
-        return "1" # All dashes means it's always True
-    return ".".join(res) # Use full stop for AND
+        return "1" 
+    return ".".join(res) 
 
 def parse_custom_boolean(expr_str):
     """Converts custom syntax (A'.B + C) into SymPy syntax (~A & B | C)"""
     expr_str = expr_str.replace('+', '|')
     expr_str = expr_str.replace('.', '&')
     
-    # Handle single quotes for NOT (including parenthesis groups)
     while "'" in expr_str:
         idx = expr_str.find("'")
         if expr_str[idx-1].isalnum():
-            # Find the start of the variable name
             start = idx - 1
             while start >= 0 and expr_str[start].isalnum():
                 start -= 1
@@ -67,7 +65,6 @@ def parse_custom_boolean(expr_str):
             target = expr_str[start:idx]
             expr_str = expr_str[:start] + '~' + target + expr_str[idx+1:]
         elif expr_str[idx-1] == ')':
-            # Find the matching opening parenthesis
             count = 1
             start = idx - 2
             while start >= 0 and count > 0:
@@ -153,7 +150,7 @@ def simplify_expression(minterms, bits, var_names):
         else:
             break
 
-    # Step 3: Prime Implicant Chart & EPIs
+    # Step 3: Prime Implicant Chart
     st.header("Step 3: Prime Implicant Chart")
     pi_chart = {m: [] for m in minterms}
     pi_df_data = {}
@@ -186,7 +183,7 @@ def simplify_expression(minterms, bits, var_names):
     # Find Non-Essential Prime Implicants (NEPIs)
     nepis = [pi['bin'] for pi in all_pi if pi['bin'] not in epis]
 
-    # Step 4: Final Output (Greedy selection from NEPIs to cover remaining terms)
+    # Step 4: Final Output
     final_pis = list(epis)
     remaining_minterms = set(minterms) - covered_minterms
     remaining_all_pis = [pi for pi in all_pi if pi['bin'] not in epis]
@@ -214,6 +211,7 @@ def simplify_expression(minterms, bits, var_names):
     st.markdown("### 🏆 Final Minimal Boolean Expression:")
     st.error(f"**{final_expression}**")
 
+
 # --- Dashboard Input Area ---
 st.markdown("---")
 st.subheader("Input Configuration")
@@ -225,47 +223,72 @@ if input_type in ["Minterms", "Maxterms"]:
     num_vars = st.number_input("Number of Variables (bits):", min_value=1, max_value=10, value=3)
     var_names = default_vars[:num_vars]
     
-    user_input = st.text_input(f"Enter {input_type} (comma-separated):", "0, 1, 3")
+    max_val = (2**num_vars) - 1
+    user_input = st.text_input(
+        f"Enter {input_type}:", 
+        value="0, 1, 3, 7", 
+        help=f"Type comma-separated numbers between 0 and {max_val}. Example: 0, 1, 3",
+        placeholder="Example: 0, 1, 3, 7"
+    )
     
     if st.button("Calculate Minimal Expression", type="primary"):
-        try:
-            terms = [int(x.strip()) for x in user_input.split(',') if x.strip()]
-            if any(t >= 2**num_vars for t in terms):
-                st.error(f"Error: A term exceeds the maximum possible value ({2**num_vars - 1}) for {num_vars} variables.")
-            else:
-                if input_type == "Minterms":
-                    minterms_list = sorted(list(set(terms)))
-                else: 
-                    universal_set = set(range(2**num_vars))
-                    minterms_list = sorted(list(universal_set - set(terms)))
+        # 1. Check for empty input
+        if not user_input.strip():
+            st.error(f"⚠️ Input is empty. Please enter some numbers (Example: 0, 1, {max_val}).")
+        
+        # 2. Check for invalid characters (letters, symbols)
+        elif not re.match(r'^[\d,\s]+$', user_input):
+            st.error("⚠️ Invalid format! Please enter ONLY numbers and commas. Letters or special characters are not allowed.")
+        
+        else:
+            try:
+                terms = [int(x.strip()) for x in user_input.split(',') if x.strip()]
                 
-                simplify_expression(minterms_list, num_vars, var_names)
-        except ValueError:
-            st.error("Invalid input. Please enter numbers only.")
+                # 3. Check for out-of-bounds numbers based on variable count
+                if any(t >= 2**num_vars for t in terms):
+                    st.error(f"⚠️ Out of bounds! You selected {num_vars} variables, which means the maximum allowed number is {max_val}.")
+                else:
+                    if input_type == "Minterms":
+                        minterms_list = sorted(list(set(terms)))
+                    else: 
+                        universal_set = set(range(2**num_vars))
+                        minterms_list = sorted(list(universal_set - set(terms)))
+                    
+                    simplify_expression(minterms_list, num_vars, var_names)
+            except ValueError:
+                st.error("⚠️ Error processing numbers. Check for double commas or typos.")
 
 elif input_type == "Boolean Expression":
-    st.markdown("**Instructions:** Use `.` for AND, `+` for OR, and `'` for NOT. (Example: `A'.B + C`)")
-    expr_input = st.text_input("Enter Boolean Expression:", "A'.B + C")
+    st.markdown("**Instructions:** Use `.` for AND, `+` for OR, and `'` for NOT.")
+    expr_input = st.text_input(
+        "Enter Boolean Expression:", 
+        value="A'.B + C",
+        help="Use strictly these operators: ' (NOT), . (AND), + (OR)",
+        placeholder="Example: (A'.B) + C'"
+    )
     
     if st.button("Calculate Minimal Expression", type="primary"):
-        try:
-            # Parse custom syntax to SymPy syntax
-            sympy_syntax = parse_custom_boolean(expr_input)
-            expr = parse_expr(sympy_syntax)
-            
-            # Extract variables dynamically
-            variables = sorted(list(expr.free_symbols), key=lambda x: str(x))
-            var_names = [str(v) for v in variables]
-            num_vars = len(var_names)
-            
-            # Generate Truth Table to extract minterms
-            tt = truth_table(expr, variables)
-            minterms_list = []
-            for i, result in enumerate(tt):
-                if result[1]: # If expression evaluates to True
-                    minterms_list.append(i)
-                    
-            st.write(f"*Identified Variables:* {', '.join(var_names)} | *Generated Minterms:* {minterms_list}")
-            simplify_expression(minterms_list, num_vars, var_names)
-        except Exception as e:
-            st.error(f"Error parsing expression. Please check your syntax. (Details: {e})")
+        if not expr_input.strip():
+            st.error("⚠️ Expression is empty. Please enter a valid Boolean expression.")
+        else:
+            try:
+                sympy_syntax = parse_custom_boolean(expr_input)
+                expr = parse_expr(sympy_syntax)
+                
+                variables = sorted(list(expr.free_symbols), key=lambda x: str(x))
+                var_names = [str(v) for v in variables]
+                num_vars = len(var_names)
+                
+                if num_vars > 10:
+                    st.error("⚠️ Too many variables! Please limit your expression to 10 unique variables.")
+                else:
+                    tt = truth_table(expr, variables)
+                    minterms_list = []
+                    for i, result in enumerate(tt):
+                        if result[1]:
+                            minterms_list.append(i)
+                            
+                    st.write(f"*Identified Variables:* {', '.join(var_names)} | *Generated Minterms:* {minterms_list}")
+                    simplify_expression(minterms_list, num_vars, var_names)
+            except Exception:
+                st.error("⚠️ Invalid expression syntax! Make sure you only use your variables (A, B, C) and the allowed operators ( ' , . , + ). Example: A'.B + C")
