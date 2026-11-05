@@ -233,5 +233,105 @@ def simplify_expression(minterms, bits, var_names, skip_step1_header=False):
     st.write(f"**Essential Prime Implicants (Kept):** {', '.join([bin_to_var(e, var_names) for e in epis]) if epis else 'None'}")
     st.write(f"**Non-Essential Prime Implicants (Dropped):** {', '.join([bin_to_var(n, var_names) for n in nepis]) if nepis else 'None'}")
     
-    final_expression
+    final_expression = " + ".join([bin_to_var(pi, var_names) for pi in final_pis])
+    st.markdown("### Final Minimal Boolean Expression:")
+    st.error(f"**{final_expression}**")
+
+
+# --- Dashboard Input Area ---
+st.markdown("---")
+st.subheader("Let's Get Started")
+
+input_type = st.radio("What are we starting with?", ["Minterms", "Maxterms", "Boolean Expression"])
+default_vars = list("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+
+if input_type in ["Minterms", "Maxterms"]:
+    num_vars = st.number_input("How many variables? (bits):", min_value=1, max_value=10, value=3)
+    var_names = default_vars[:num_vars]
     
+    max_val = (2**num_vars) - 1
+    
+    st.markdown(f"**Quick Tip:** Drop in some comma-separated numbers from **0 to {max_val}** (since you picked {num_vars} variables).")
+    user_input = st.text_input(
+        f"Enter your {input_type}:", 
+        value="0, 1, 3, 7" if input_type == "Minterms" else "2, 4, 5", 
+        placeholder=f"E.g., 0, 2, {max_val}"
+    )
+    
+    if st.button("Simplify It!", type="primary"):
+        if not user_input.strip():
+            st.error(f"Hold up! The input is empty. Try something like: 0, 1, {max_val}")
+        
+        elif not re.match(r'^[\d,\s]+$', user_input):
+            st.error("Whoops! Looks like you typed some letters or symbols. We just need numbers and commas here.")
+        
+        else:
+            try:
+                terms = [int(x.strip()) for x in user_input.split(',') if x.strip()]
+                
+                if any(t >= 2**num_vars for t in terms):
+                    st.error(f"Out of bounds! For {num_vars} variables, the highest number you can use is {max_val}.")
+                else:
+                    if input_type == "Minterms":
+                        minterms_list = sorted(list(set(terms)))
+                    else: 
+                        universal_set = set(range(2**num_vars))
+                        minterms_list = sorted(list(universal_set - set(terms)))
+                    
+                    simplify_expression(minterms_list, num_vars, var_names)
+            except ValueError:
+                st.error("Something went wrong processing those numbers. Check for double commas or typos.")
+
+elif input_type == "Boolean Expression":
+    st.markdown("**Quick Tip:** Use `.` for AND, `+` for OR, and `'` for NOT. (e.g., `(A.B)' + C`)")
+    expr_input = st.text_input(
+        "Enter your expression:", 
+        value="A'.B + (B.C)'",
+        placeholder="Example: (A'.B) + C'"
+    )
+    
+    if st.button("Simplify It!", type="primary"):
+        if not expr_input.strip():
+            st.error("Hold up! The expression box is empty.")
+        else:
+            try:
+                # 1. Parse string to SymPy
+                sympy_syntax = parse_custom_boolean(expr_input)
+                expr = parse_expr(sympy_syntax)
+                
+                variables = sorted(list(expr.free_symbols), key=lambda x: str(x))
+                var_names = [str(v) for v in variables]
+                num_vars = len(var_names)
+                
+                if num_vars > 10:
+                    st.error("Whoa, that's a lot of variables! Let's keep it to 10 or fewer.")
+                else:
+                    st.markdown("---")
+                    st.header("Phase 1: Algebraic Cleanup")
+                    st.info("Before we hit the tables, let's break this down using standard Boolean theorems.")
+                    
+                    # 2. Show Original
+                    st.markdown("**1. Original Expression:**")
+                    st.code(sympy_to_custom(expr))
+                    
+                    # 3. Apply De Morgan's / Involution
+                    nnf_expr = to_nnf(expr)
+                    st.markdown("**2. De Morgan's & Involution Laws (Pushing NOTs inward):**")
+                    st.code(sympy_to_custom(nnf_expr))
+                    
+                    # 4. Apply Distributive Law
+                    dnf_expr = to_dnf(nnf_expr)
+                    st.markdown("**3. Distributive Law (Expanding into Sum of Products):**")
+                    st.code(sympy_to_custom(dnf_expr))
+                    
+                    st.write("Now that we have a clean Sum of Products, we can map it to minterms and fire up the Tabular Method to track the remaining redundancies.")
+                    st.markdown("---")
+                    
+                    # 5. Get minterms and run QM
+                    tt = truth_table(expr, variables)
+                    minterms_list = [i for i, result in enumerate(tt) if result[1]]
+                    
+                    simplify_expression(minterms_list, num_vars, var_names, skip_step1_header=True)
+                    
+            except Exception:
+                st.error("Syntax error! Make sure you're only using your variables (A, B, C) and valid operators ( ' , . , + ). Check your parentheses!")
