@@ -294,4 +294,4 @@ elif input_type == "Boolean Expression":
                         if result[1]:
                             minterms_list.append(i)
                             
-                    st.write(f"*Identified Variables:* {', '.join(var_names)} | *Generated Minterms
+                    st.write(f"*Identified Variables:* {', '.join(var_names)} | *Generated Minterms:* {minterms_list}")
