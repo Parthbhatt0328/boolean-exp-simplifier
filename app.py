@@ -11,7 +11,7 @@ st.set_page_config(page_title="Boolean Simplifier", layout="wide")
 col1, col2 = st.columns([3, 1])
 with col1:
     st.title("Boolean Expression Simplifier")
-    st.markdown("**(Quine-McCluskey Tabular Method)**")
+    st.markdown("**(Algebraic Redundancy & Tabular Method)**")
 with col2:
     st.markdown(
         """
@@ -78,7 +78,7 @@ def parse_custom_boolean(expr_str):
             expr_str = expr_str[:idx] + expr_str[idx+1:]
     return expr_str
 
-def simplify_expression(minterms, bits, var_names):
+def simplify_expression(minterms, bits, var_names, original_expr=None):
     if not minterms:
         st.success("**Final Reduced Expression:** 0 (Always False)")
         return
@@ -86,10 +86,16 @@ def simplify_expression(minterms, bits, var_names):
     if len(minterms) == 2**bits:
         st.success("**Final Reduced Expression:** 1 (Always True)")
         return
-    
+        
+    if original_expr:
+        st.markdown("### Step 1: Algebraic Expansion")
+        st.info("Expanding the inputted boolean expression into its Canonical Sum of Products (SOP) state to begin reduction.")
+        canonical_terms = [bin_to_var(get_binary(m, bits), var_names) for m in minterms]
+        st.write(f"**Canonical SOP:** `{ ' + '.join(canonical_terms) }`")
+    else:
+        st.header("Step 1: Binary Grouping")
+
     groups = {}
-    
-    # Step 1: Initial Grouping
     for m in minterms:
         bin_val = get_binary(m, bits)
         ones = bin_val.count('1')
@@ -97,15 +103,16 @@ def simplify_expression(minterms, bits, var_names):
             groups[ones] = []
         groups[ones].append({ 'm': [m], 'bin': bin_val, 'matched': False })
     
-    st.header("Step 1: Binary Grouping")
     step1_data = []
     for k in sorted(groups.keys()):
         for item in groups[k]:
-            step1_data.append({"Group (1s)": k, "Minterm": str(item['m'][0]), "Binary": item['bin']})
+            step1_data.append({"Group (1s)": k, "Minterm": str(item['m'][0]), "Binary": item['bin'], "Algebraic Term": bin_to_var(item['bin'], var_names)})
     st.table(pd.DataFrame(step1_data))
 
-    # Step 2: Step-by-Step Pairing
-    st.header("Step 2: Tabular Pairing")
+    # Step 2: Step-by-Step Pairing (Redundancy Theorems)
+    st.header("Step 2: Applying Redundancy Theorems")
+    st.info("Systematically applying the Redundancy Theorem ( **XY + XY' = X** ) to reach the Prime Implicants state.")
+    
     all_pi = []
     current_groups = groups
     step = 1
@@ -134,7 +141,18 @@ def simplify_expression(minterms, bits, var_names):
                         combined_m = sorted(list(set(t1['m'] + t2['m'])))
                         if not any(x['bin'] == res for x in new_groups[ones]):
                             new_groups[ones].append({'m': combined_m, 'bin': res, 'matched': False})
-                            step_data.append({"Matched Minterms": str(combined_m), "New Binary": res})
+                            
+                            # Generate the Algebraic Redundancy String
+                            term1_str = bin_to_var(t1['bin'], var_names)
+                            term2_str = bin_to_var(t2['bin'], var_names)
+                            res_str = bin_to_var(res, var_names)
+                            theorem_str = f"{term1_str} + {term2_str} ➔ {res_str}"
+                            
+                            step_data.append({
+                                "Minterm Match": str(combined_m), 
+                                "Binary Result": res, 
+                                "Redundancy Theorem Applied": theorem_str
+                            })
         
         for k in keys:
             for t in current_groups[k]:
@@ -142,7 +160,7 @@ def simplify_expression(minterms, bits, var_names):
                     all_pi.append(t)
                     
         if matched_any_in_step:
-            st.subheader(f"Pairing Iteration {step}")
+            st.subheader(f"Reduction Iteration {step}")
             if step_data:
                 st.table(pd.DataFrame(step_data))
             current_groups = new_groups
@@ -150,8 +168,10 @@ def simplify_expression(minterms, bits, var_names):
         else:
             break
 
-    # Step 3: Prime Implicant Chart
-    st.header("Step 3: Prime Implicant Chart")
+    # Step 3: Prime Implicant Chart (Eliminating NEPIs)
+    st.header("Step 3: Eliminating Non-Essential Prime Implicants")
+    st.info("Using the Prime Implicant Chart to select Essential Prime Implicants (EPIs) and eliminate redundant Non-Essential Prime Implicants (NEPIs).")
+    
     pi_chart = {m: [] for m in minterms}
     pi_df_data = {}
     
@@ -165,7 +185,7 @@ def simplify_expression(minterms, bits, var_names):
                 pi_df_data[str(m)].append("")
                 
     pi_df = pd.DataFrame(pi_df_data)
-    pi_df.insert(0, "Prime Implicant (Binary)", [pi['bin'] for pi in all_pi])
+    pi_df.insert(0, "Prime Implicant (Algebraic)", [bin_to_var(pi['bin'], var_names) for pi in all_pi])
     st.table(pi_df)
 
     # Find Essential Prime Implicants (EPIs)
@@ -202,13 +222,13 @@ def simplify_expression(minterms, bits, var_names):
             remaining_all_pis.remove(best_pi)
 
     st.markdown("---")
-    st.header("Step 4: Result Categorization")
-    st.info(f"**All Prime Implicants:** {', '.join([bin_to_var(pi['bin'], var_names) for pi in all_pi])}")
-    st.success(f"**Essential Prime Implicants:** {', '.join([bin_to_var(e, var_names) for e in epis]) if epis else 'None'}")
-    st.warning(f"**Non-Essential Prime Implicants:** {', '.join([bin_to_var(n, var_names) for n in nepis]) if nepis else 'None'}")
+    st.header("Step 4: Final Result Categorization")
+    st.info(f"**Prime Implicants State (All):** {', '.join([bin_to_var(pi['bin'], var_names) for pi in all_pi])}")
+    st.success(f"**Essential Prime Implicants (Kept):** {', '.join([bin_to_var(e, var_names) for e in epis]) if epis else 'None'}")
+    st.warning(f"**Non-Essential Prime Implicants (Eliminated):** {', '.join([bin_to_var(n, var_names) for n in nepis]) if nepis else 'None'}")
     
     final_expression = " + ".join([bin_to_var(pi, var_names) for pi in final_pis])
-    st.markdown("### 🏆 Final Minimal Boolean Expression:")
+    st.markdown("### 🏆 Minimal Boolean Expression:")
     st.error(f"**{final_expression}**")
 
 
@@ -225,7 +245,6 @@ if input_type in ["Minterms", "Maxterms"]:
     
     max_val = (2**num_vars) - 1
     
-    # Instructions and Examples
     st.markdown(f"**Instructions:** Enter a list of comma-separated numbers from **0 to {max_val}** (since you selected {num_vars} variables).")
     if input_type == "Minterms":
         st.markdown("**Example input:** `0, 1, 2, 5, 7`")
@@ -294,7 +313,6 @@ elif input_type == "Boolean Expression":
                         if result[1]:
                             minterms_list.append(i)
                             
-                    st.write(f"*Identified Variables:* {', '.join(var_names)} | *Generated Minterms:* {minterms_list}")
-                    simplify_expression(minterms_list, num_vars, var_names)
+                    simplify_expression(minterms_list, num_vars, var_names, original_expr=expr_input)
             except Exception:
                 st.error("⚠️ Invalid expression syntax! Make sure you only use your variables (A, B, C) and the allowed operators ( ' , . , + ). Example: A'.B + C")
